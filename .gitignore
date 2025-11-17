@@ -1,0 +1,7 @@
+/target
+/vcpkg
+ffmpeg/**/*
+node_modules
+build
+output*.*
+DS_Store
