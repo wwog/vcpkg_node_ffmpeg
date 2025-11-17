@@ -8,6 +8,7 @@
       "sources": [
         "./addon_src/binding.c",
         "./addon_src/ffmpeg.c",
+        "./addon_src/utils.c",
         "./ffmpeg/fftools/cmdutils.c",
         "./ffmpeg/fftools/ffmpeg_dec.c",
         "./ffmpeg/fftools/ffmpeg_demux.c",
