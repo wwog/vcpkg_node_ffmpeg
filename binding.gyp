@@ -82,7 +82,7 @@
             }
           }
         }],
-        ["OS!='win'", {
+        ["OS=='mac'", {
           "libraries": [
             "-L<(module_root_dir)/vcpkg/installed/<(triplet)/lib",
             "-lavcodec",
@@ -114,6 +114,11 @@
               "-Wl,-platform_version,macos,11.0,26.0",
               "-framework", "OpenGL",
               "-framework", "CoreVideo",
+              "-framework", "CoreMedia",
+              "-framework", "CoreGraphics",
+              "-framework", "AVFoundation",
+              "-framework", "AudioToolbox",
+              "-framework", "CoreAudio",
               "-framework", "CoreFoundation",
               "-framework", "Foundation",
               "-framework", "AppKit"
@@ -122,19 +127,6 @@
           "defines": [
             "HAVE_LIBC_M=1"
           ],
-          "conditions": [
-            ["OS=='mac'", {
-              "link_settings": {
-                "libraries": [
-                  "-framework OpenGL",
-                  "-framework CoreVideo",
-                  "-framework CoreFoundation",
-                  "-framework Foundation",
-                  "-framework AppKit"
-                ]
-              }
-            }]
-          ]
         }]
       ]
     }

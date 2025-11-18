@@ -48,30 +48,29 @@ impl AddonPreparer {
     }
     
     /// Create config.h file (required for ffmpeg compilation)
+    /// This file uses conditional compilation to support all platforms
     fn create_config_h(&self) -> Result<(), Box<dyn std::error::Error>> {
         let config_h_path = self.ffmpeg_source_dir.join("config.h");
         
-        // 检查现有文件是否匹配当前平台
+        // 检查是否已经存在跨平台的 config.h
         if config_h_path.exists() {
             let existing_content = fs::read_to_string(&config_h_path)?;
-            let is_windows_config = existing_content.contains("Windows build for Node.js addon");
-            let should_be_windows = cfg!(target_os = "windows");
-            
-            // 如果平台匹配，跳过重新生成
-            if (is_windows_config && should_be_windows) || (!is_windows_config && !should_be_windows) {
-                println!("✓ config.h already exists and matches current platform, skipping creation");
+            // 检查是否是跨平台版本（包含条件编译）
+            if existing_content.contains("#ifdef _WIN32") || existing_content.contains("#if defined(_WIN32)") {
+                println!("✓ config.h already exists (cross-platform version), skipping creation");
                 return Ok(());
             } else {
-                println!("⚠ config.h exists but is for different platform, regenerating...");
+                println!("⚠ config.h exists but is old platform-specific version, regenerating as cross-platform...");
             }
         }
         
-        let config_h_content = if cfg!(target_os = "windows") {
-            // Windows configuration
-            r#"/* config.h - Generated for Windows build */
+        // 生成跨平台的 config.h，使用条件编译支持所有平台
+        let config_h_content = r#"/* config.h - Cross-platform configuration for Node.js addon */
 #ifndef CONFIG_H
 #define CONFIG_H
 
+/* Platform detection and system-specific defines */
+#ifdef _WIN32
 /* Windows specific defines */
 #define HAVE_IO_H 1
 #define HAVE_UNISTD_H 0
@@ -86,56 +85,38 @@ impl AddonPreparer {
 #define HAVE_GETSTDHANDLE 1
 #define HAVE_GETRUSAGE 0
 
-/* FFmpeg components */
-#define CONFIG_AVUTIL 1
-#define CONFIG_AVCODEC 1
-#define CONFIG_AVFORMAT 1
-#define CONFIG_AVDEVICE 1
-#define CONFIG_AVFILTER 1
-#define CONFIG_SWSCALE 1
-#define CONFIG_SWRESAMPLE 1
-#define CONFIG_POSTPROC 0
-
-/* Architecture */
-#define ARCH_X86_32 0
-#define ARCH_X86_64 1
-
 /* Threading */
 #define HAVE_PTHREADS 0
 #define HAVE_W32THREADS 1
-
-/* Endianness */
-#define HAVE_BIGENDIAN 0
 
 /* Math functions - MSVC provides these as intrinsics */
 #define HAVE_LRINT 1
 #define HAVE_LRINTF 1
 
-/* FFmpeg data directory - empty for Node.js addon */
-#define FFMPEG_DATADIR ""
-#define AVCONV_DATADIR ""
+/* System math library functions - MSVC provides some */
+#define HAVE_CBRT 1
+#define HAVE_CBRTF 1
+#define HAVE_COPYSIGN 1
+#define HAVE_ERF 1
+#define HAVE_HYPOT 1
+#define HAVE_RINT 1
+#define HAVE_ROUND 1
+#define HAVE_ROUNDF 1
+#define HAVE_TRUNC 1
+#define HAVE_TRUNCF 1
+#define HAVE_ATANF 1
+#define HAVE_ATAN2F 1
+#define HAVE_POWF 1
 
-/* Build configuration */
-#define CONFIG_THIS_YEAR 2025
-#define FFMPEG_CONFIGURATION "Windows build for Node.js addon"
+/* Compiler identification */
+#ifdef _MSC_VER
 #define CC_IDENT "MSVC"
-#define FFMPEG_VERSION "N/A"
+#else
+#define CC_IDENT "GCC/Clang"
+#endif
 
-#endif /* CONFIG_H */
-"#.to_string()
-        } else {
-            // Unix (macOS/Linux) configuration
-            let arch_defines = if cfg!(target_arch = "aarch64") {
-                "#define ARCH_X86_64 0\n#define ARCH_AARCH64 1\n"
-            } else {
-                "#define ARCH_X86_64 1\n#define ARCH_AARCH64 0\n"
-            };
-            
-            format!(r#"/* config.h - Generated for Unix build (macOS/Linux) */
-#ifndef CONFIG_H
-#define CONFIG_H
-
-/* Unix specific defines */
+#else
+/* Unix (macOS/Linux) specific defines */
 #define HAVE_IO_H 0
 #define HAVE_UNISTD_H 1
 #define HAVE_SYS_RESOURCE_H 1
@@ -149,26 +130,9 @@ impl AddonPreparer {
 #define HAVE_GETSTDHANDLE 0
 #define HAVE_GETRUSAGE 1
 
-/* FFmpeg components */
-#define CONFIG_AVUTIL 1
-#define CONFIG_AVCODEC 1
-#define CONFIG_AVFORMAT 1
-#define CONFIG_AVDEVICE 1
-#define CONFIG_AVFILTER 1
-#define CONFIG_SWSCALE 1
-#define CONFIG_SWRESAMPLE 1
-#define CONFIG_POSTPROC 0
-
-/* Architecture */
-#define ARCH_X86_32 0
-{}
-
 /* Threading */
 #define HAVE_PTHREADS 1
 #define HAVE_W32THREADS 0
-
-/* Endianness */
-#define HAVE_BIGENDIAN 0
 
 /* Math functions */
 #define HAVE_LRINT 1
@@ -189,24 +153,77 @@ impl AddonPreparer {
 #define HAVE_ATAN2F 1
 #define HAVE_POWF 1
 
+/* Compiler identification */
+#ifdef __clang__
+#define CC_IDENT "Clang"
+#elif defined(__GNUC__)
+#define CC_IDENT "GCC"
+#else
+#define CC_IDENT "GCC/Clang"
+#endif
+
+#endif /* _WIN32 */
+
+/* FFmpeg components */
+#define CONFIG_AVUTIL 1
+#define CONFIG_AVCODEC 1
+#define CONFIG_AVFORMAT 1
+#define CONFIG_AVDEVICE 1
+#define CONFIG_AVFILTER 1
+#define CONFIG_SWSCALE 1
+#define CONFIG_SWRESAMPLE 1
+#define CONFIG_POSTPROC 0
+
+/* Architecture detection */
+#define ARCH_X86_32 0
+
+#ifdef _WIN32
+/* Windows architecture */
+#ifdef _M_ARM64
+#define ARCH_X86_64 0
+#define ARCH_AARCH64 1
+#elif defined(_M_X64) || defined(_M_AMD64)
+#define ARCH_X86_64 1
+#define ARCH_AARCH64 0
+#else
+#define ARCH_X86_64 0
+#define ARCH_AARCH64 0
+#endif
+#else
+/* Unix architecture */
+#ifdef __aarch64__
+#define ARCH_X86_64 0
+#define ARCH_AARCH64 1
+#elif defined(__x86_64__) || defined(__amd64__)
+#define ARCH_X86_64 1
+#define ARCH_AARCH64 0
+#else
+#define ARCH_X86_64 0
+#define ARCH_AARCH64 0
+#endif
+#endif
+
+/* Endianness */
+#define HAVE_BIGENDIAN 0
+
 /* FFmpeg data directory - empty for Node.js addon */
 #define FFMPEG_DATADIR ""
 #define AVCONV_DATADIR ""
 
 /* Build configuration */
 #define CONFIG_THIS_YEAR 2025
-#define FFMPEG_CONFIGURATION "Unix build for Node.js addon"
-#define CC_IDENT "GCC/Clang"
+#ifdef _WIN32
+#define FFMPEG_CONFIGURATION "Cross-platform build for Node.js addon (Windows)"
+#else
+#define FFMPEG_CONFIGURATION "Cross-platform build for Node.js addon (Unix)"
+#endif
 #define FFMPEG_VERSION "N/A"
 
 #endif /* CONFIG_H */
-"#, arch_defines)
-        };
+"#;
         
         fs::write(&config_h_path, config_h_content)?;
-        println!("✓ config.h created for {}: {}", 
-            if cfg!(target_os = "windows") { "Windows" } else { "Unix" },
-            config_h_path.display());
+        println!("✓ config.h created (cross-platform version): {}", config_h_path.display());
         Ok(())
     }
     
