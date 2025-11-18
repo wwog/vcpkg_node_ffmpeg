@@ -82,8 +82,7 @@ console.log('='.repeat(60));
 console.log('\n可选: 运行视频转换测试 (将 input.mp4 转换为 m3u8)');
 console.log('如需运行转换测试，请取消下面的注释\n');
 
-/*
-//将input.mp4转换为m3u8
+
 const result = ffmpeg.run([
     '-i', 'input.mp4',
     '-c:v', 'libx264',
@@ -93,4 +92,4 @@ const result = ffmpeg.run([
     'output.m3u8'
 ]);
 console.log('转换结果:', result);
-*/
+
