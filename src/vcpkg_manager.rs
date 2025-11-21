@@ -290,9 +290,7 @@ impl VcpkgManager {
         // - x265: HEVC encoding (mp4, mov, mkv, m4v)
         // - vpx: VP8/VP9 encoding (webm)
         // - zlib: 解压封面等依赖 zlib 的数据
-        let required_features = vec![
-            "x264", "x265", "vpx", "zlib", "libpng", "libjpeg", "webp", "cuda", "nvcodec",
-        ];
+        let required_features = vec!["x264", "x265", "vpx", "zlib", "openjpeg"];
 
         // Check if ffmpeg is installed with all required features
         let ffmpeg_with_features = self.is_ffmpeg_with_features(&required_features);
@@ -333,7 +331,7 @@ impl VcpkgManager {
         println!("Installing {}...", package_spec);
         println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
         println!("  Platform: {}", triplet);
-        println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9), zlib (封面/压缩数据), libpng (封面/压缩数据), libjpeg (封面/压缩数据), webp (封面/压缩数据), cuda (GPU加速), nvcodec (GPU加速)");
+        println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)...");
         println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
 
         let status = Command::new(&self.vcpkg_exe)
