@@ -1,3 +1,4 @@
+use flate2::read::GzDecoder;
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -6,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
-use flate2::read::GzDecoder;
 use tar::Archive;
 
 pub struct VcpkgManager {
@@ -23,20 +23,20 @@ impl VcpkgManager {
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("vcpkg")
         };
-        
+
         // 跨平台支持：Windows 使用 vcpkg.exe，Unix 系统使用 vcpkg
         let vcpkg_exe = if cfg!(target_os = "windows") {
             vcpkg_root.join("vcpkg.exe")
         } else {
             vcpkg_root.join("vcpkg")
         };
-        
+
         Self {
             vcpkg_root,
             vcpkg_exe,
         }
     }
-    
+
     /// Get the appropriate vcpkg triplet for the current platform
     fn get_triplet(&self) -> &'static str {
         if cfg!(target_os = "windows") {
@@ -54,56 +54,62 @@ impl VcpkgManager {
             "x64-linux"
         }
     }
-    
+
     /// Check if vcpkg is installed
     pub fn is_installed(&self) -> bool {
         self.vcpkg_exe.exists()
     }
-    
+
     /// Check if git is available
     fn check_git(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new("git")
-            .arg("--version")
-            .output()?;
-        
+        let output = Command::new("git").arg("--version").output()?;
+
         if !output.status.success() {
             return Err("git is not installed or not in PATH, please install git first".into());
         }
-        
+
         Ok(())
     }
-    
+
     /// Git clone with retry mechanism and mirror support
-    fn git_clone_with_retry(&self, url: &str, max_retries: u32) -> Result<(), Box<dyn std::error::Error>> {
+    fn git_clone_with_retry(
+        &self,
+        url: &str,
+        max_retries: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_error = None;
-        
+
         for attempt in 1..=max_retries {
             // 重试前清理失败的克隆目录
             if attempt > 1 && self.vcpkg_root.exists() {
                 println!("清理失败的克隆目录...");
                 let _ = fs::remove_dir_all(&self.vcpkg_root);
             }
-            
+
             if attempt > 1 {
                 let wait_seconds = (attempt * 2) as u64; // 递增等待时间：2秒、4秒、6秒...
-                println!("等待 {} 秒后重试 (尝试 {}/{})...", wait_seconds, attempt, max_retries);
+                println!(
+                    "等待 {} 秒后重试 (尝试 {}/{})...",
+                    wait_seconds, attempt, max_retries
+                );
                 thread::sleep(Duration::from_secs(wait_seconds));
             }
-            
+
             println!("正在克隆 vcpkg 仓库 (尝试 {}/{})...", attempt, max_retries);
             println!("  源地址: {}", url);
-            
+
             let output = Command::new("git")
                 .args(&[
                     "clone",
-                    "--depth", "1", // 浅克隆以加快速度
+                    "--depth",
+                    "1", // 浅克隆以加快速度
                     url,
                     self.vcpkg_root.to_str().unwrap(),
                 ])
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::piped())
                 .output();
-            
+
             match output {
                 Ok(output) => {
                     if output.status.success() {
@@ -121,46 +127,54 @@ impl VcpkgManager {
                 }
             }
         }
-        
-        Err(format!("所有 {} 次尝试均失败。最后错误: {}", max_retries, last_error.unwrap_or_else(|| "未知错误".to_string())).into())
+
+        Err(format!(
+            "所有 {} 次尝试均失败。最后错误: {}",
+            max_retries,
+            last_error.unwrap_or_else(|| "未知错误".to_string())
+        )
+        .into())
     }
-    
+
     /// Install vcpkg
     pub fn install_vcpkg(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_installed() {
             println!("✓ vcpkg already installed, skipping installation");
             return Ok(());
         }
-        
+
         println!("Checking git...");
         self.check_git()?;
-        
-        println!("Starting vcpkg installation to: {}", self.vcpkg_root.display());
-        
+
+        println!(
+            "Starting vcpkg installation to: {}",
+            self.vcpkg_root.display()
+        );
+
         if self.vcpkg_root.exists() {
             println!("Cleaning existing directory...");
             fs::remove_dir_all(&self.vcpkg_root)?;
         }
-        
+
         if let Some(parent) = self.vcpkg_root.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         // 尝试多个镜像源
         let mirrors = vec![
             "https://github.com/Microsoft/vcpkg.git",
             "https://gitee.com/mirrors/vcpkg.git", // Gitee 镜像（中国用户）
             "https://github.com.cnpmjs.org/Microsoft/vcpkg.git", // CNPM 镜像
         ];
-        
+
         let mut clone_success = false;
         let mut last_error = None;
-        
+
         for (index, url) in mirrors.iter().enumerate() {
             if index > 0 {
                 println!("\n尝试使用镜像源 {}...", index + 1);
             }
-            
+
             match self.git_clone_with_retry(url, 3) {
                 Ok(_) => {
                     clone_success = true;
@@ -178,32 +192,37 @@ impl VcpkgManager {
                 }
             }
         }
-        
+
         if !clone_success {
-            return Err(format!("所有镜像源均失败。最后错误: {}", 
-                last_error.map(|e| e.to_string()).unwrap_or_else(|| "未知错误".to_string())).into());
+            return Err(format!(
+                "所有镜像源均失败。最后错误: {}",
+                last_error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "未知错误".to_string())
+            )
+            .into());
         }
-        
+
         println!("Running bootstrap script...");
-        
+
         // 跨平台 bootstrap 脚本
         let bootstrap_script = if cfg!(target_os = "windows") {
             self.vcpkg_root.join("bootstrap-vcpkg.bat")
         } else {
             self.vcpkg_root.join("bootstrap-vcpkg.sh")
         };
-        
+
         // Unix 系统需要添加执行权限
         if !cfg!(target_os = "windows") {
             let chmod_status = Command::new("chmod")
                 .args(&["+x", bootstrap_script.to_str().unwrap()])
                 .status();
-            
+
             if let Err(e) = chmod_status {
                 eprintln!("警告: 无法设置执行权限: {}", e);
             }
         }
-        
+
         let status = if cfg!(target_os = "windows") {
             Command::new("cmd")
                 .args(&["/C", bootstrap_script.to_str().unwrap()])
@@ -219,27 +238,33 @@ impl VcpkgManager {
                 .stderr(Stdio::inherit())
                 .status()?
         };
-        
+
         if !status.success() {
             return Err("vcpkg bootstrap failed".into());
         }
-        
+
         if !self.vcpkg_exe.exists() {
-            let exe_name = if cfg!(target_os = "windows") { "vcpkg.exe" } else { "vcpkg" };
-            return Err(format!("{} was not generated, bootstrap may have failed", exe_name).into());
+            let exe_name = if cfg!(target_os = "windows") {
+                "vcpkg.exe"
+            } else {
+                "vcpkg"
+            };
+            return Err(
+                format!("{} was not generated, bootstrap may have failed", exe_name).into(),
+            );
         }
-        
+
         println!("vcpkg installation completed!");
         Ok(())
     }
-    
+
     /// Check if ffmpeg is installed with required features (x264, x265, vpx)
     fn is_ffmpeg_with_features(&self, features: &[&str]) -> bool {
         let triplet = self.get_triplet();
         let output = Command::new(&self.vcpkg_exe)
             .args(&["list", "ffmpeg"])
             .output();
-        
+
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -249,39 +274,41 @@ impl VcpkgManager {
                 }
             }
         }
-        
+
         false
     }
-    
-    
+
     /// Install ffmpeg with codec support for x264, x265, mp4, mov, avi, webm, mkv, m4v formats
     /// Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9 for WebM)
     pub fn install_packages(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_installed() {
             return Err("vcpkg is not installed, please call install_vcpkg() first".into());
         }
-        
+
         // Required features for format support:
         // - x264: H.264 encoding (mp4, mov, avi, mkv, m4v)
         // - x265: HEVC encoding (mp4, mov, mkv, m4v)
         // - vpx: VP8/VP9 encoding (webm)
-        let required_features = vec!["x264", "x265", "vpx"];
-        
+        // - zlib: 解压封面等依赖 zlib 的数据
+        let required_features = vec![
+            "x264", "x265", "vpx", "zlib", "libpng", "libjpeg", "webp", "cuda", "nvcodec",
+        ];
+
         // Check if ffmpeg is installed with all required features
         let ffmpeg_with_features = self.is_ffmpeg_with_features(&required_features);
-        
+
         if ffmpeg_with_features {
             println!("✓ ffmpeg already installed with required codec features");
             println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
             return Ok(());
         }
-        
+
         // Check if ffmpeg is installed but without required features
         let triplet = self.get_triplet();
         let output = Command::new(&self.vcpkg_exe)
             .args(&["list", "ffmpeg"])
             .output();
-        
+
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -289,14 +316,11 @@ impl VcpkgManager {
                     println!("⚠ ffmpeg is installed but without required codec features");
                     println!("Removing ffmpeg to reinstall with full codec support...");
                     let status = Command::new(&self.vcpkg_exe)
-                        .args(&[
-                            "remove",
-                            &format!("ffmpeg:{}", triplet),
-                        ])
+                        .args(&["remove", &format!("ffmpeg:{}", triplet)])
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
                         .status()?;
-                    
+
                     if !status.success() {
                         return Err("Failed to remove existing ffmpeg package".into());
                     }
@@ -304,71 +328,67 @@ impl VcpkgManager {
                 }
             }
         }
-        
-        let package_spec = format!("ffmpeg[x264,x265,vpx]:{}", triplet);
+
+        let package_spec = format!("ffmpeg[x264,x265,vpx,zlib]:{}", triplet);
         println!("Installing {}...", package_spec);
         println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
         println!("  Platform: {}", triplet);
-        println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)");
+        println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9), zlib (封面/压缩数据), libpng (封面/压缩数据), libjpeg (封面/压缩数据), webp (封面/压缩数据), cuda (GPU加速), nvcodec (GPU加速)");
         println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
-        
+
         let status = Command::new(&self.vcpkg_exe)
-            .args(&[
-                "install",
-                &package_spec,
-            ])
+            .args(&["install", &package_spec])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()?;
-        
+
         if !status.success() {
             return Err("ffmpeg installation failed".into());
         }
-        
+
         println!("✓ ffmpeg installation completed with full codec support!");
         println!("✓ Format support: x264, x265, mp4, mov, avi, webm, mkv, m4v");
         Ok(())
     }
-    
+
     /// Get vcpkg root directory
     pub fn get_vcpkg_root(&self) -> &Path {
         &self.vcpkg_root
     }
-    
+
     /// Get vcpkg executable path
     pub fn get_vcpkg_exe(&self) -> &Path {
         &self.vcpkg_exe
     }
-    
+
     /// Check if ffmpeg package is extracted, returns extracted folder path
     pub fn is_ffmpeg_extracted(&self) -> Option<PathBuf> {
         let output_dir = self.get_output_dir();
         let ffmpeg_dir = output_dir.join("ffmpeg");
-        
+
         if ffmpeg_dir.exists() && ffmpeg_dir.is_dir() {
             return Some(ffmpeg_dir);
         }
-        
+
         None
     }
-    
+
     /// Get output directory (runtime directory)
     fn get_output_dir(&self) -> PathBuf {
         if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
             PathBuf::from(&manifest_dir)
         } else {
-            env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
+            env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
         }
     }
-    
+
     /// Find ffmpeg tar.gz file
     fn find_ffmpeg_archive(&self) -> Option<PathBuf> {
         let downloads_dir = self.vcpkg_root.join("downloads");
         if !downloads_dir.exists() {
             return None;
         }
-        
+
         if let Ok(entries) = fs::read_dir(&downloads_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -379,10 +399,10 @@ impl VcpkgManager {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Extract ffmpeg package to runtime directory
     pub fn extract_ffmpeg(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(extracted_dir) = self.is_ffmpeg_extracted() {
@@ -390,30 +410,32 @@ impl VcpkgManager {
             println!("  Export directory: {}", extracted_dir.display());
             return Ok(());
         }
-        
+
         let archive_path = match self.find_ffmpeg_archive() {
             Some(path) => path,
             None => {
-                return Err("ffmpeg tar.gz file not found, please install ffmpeg package first".into());
+                return Err(
+                    "ffmpeg tar.gz file not found, please install ffmpeg package first".into(),
+                );
             }
         };
-        
+
         println!("Extracting ffmpeg package: {}", archive_path.display());
-        
+
         let output_dir = self.get_output_dir();
-        
+
         let temp_dir = output_dir.join(".ffmpeg_temp");
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
         fs::create_dir_all(&temp_dir)?;
-        
+
         let file = File::open(&archive_path)?;
         let gz_decoder = GzDecoder::new(BufReader::new(file));
         let mut archive = Archive::new(gz_decoder);
-        
+
         archive.unpack(&temp_dir)?;
-        
+
         let mut extracted_top_dir = None;
         if let Ok(entries) = temp_dir.read_dir() {
             for entry in entries.flatten() {
@@ -425,7 +447,7 @@ impl VcpkgManager {
                 }
             }
         }
-        
+
         let extracted_top_dir = match extracted_top_dir {
             Some(dir) => dir,
             None => {
@@ -433,21 +455,23 @@ impl VcpkgManager {
                 return Err("Top-level directory not found after extraction".into());
             }
         };
-        
+
         let target_dir = output_dir.join("ffmpeg");
-        
+
         if target_dir.exists() {
             fs::remove_dir_all(&target_dir)?;
         }
-        
+
         fs::rename(&extracted_top_dir, &target_dir)?;
-        
+
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
-        
-        println!("✓ ffmpeg project successfully exported to: {}", target_dir.display());
+
+        println!(
+            "✓ ffmpeg project successfully exported to: {}",
+            target_dir.display()
+        );
         Ok(())
     }
 }
-
